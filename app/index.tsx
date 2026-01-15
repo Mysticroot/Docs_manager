@@ -1,7 +1,54 @@
-import { View, Text, StyleSheet, Pressable } from "react-native";
+import  {Directory,File,Paths} from "expo-file-system";
+import { View, Text, StyleSheet, Pressable, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system";
+
+const TEMP_DIR = new Directory(Paths.cache, "temp");
+
 
 export default function HomeScreen() {
+
+
+ const ensureTempDir = () => {
+   if (!TEMP_DIR.exists) {
+     TEMP_DIR.create({
+       intermediates: true,
+     });
+   }
+ };
+
+
+   const pickDocument = async () => {
+     try {
+       const result = await DocumentPicker.getDocumentAsync({
+         type: ["application/pdf", "image/*"],
+         copyToCacheDirectory: true,
+       });
+
+       if (result.canceled) return;
+
+       const file = result.assets[0];
+
+       await ensureTempDir();
+
+       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+       const tempPath = `${TEMP_DIR}${Date.now()}_${safeName}`;
+
+         const sourceFile = new File(file.uri);
+
+        await sourceFile.copy(TEMP_DIR);
+
+
+       Alert.alert("Saved to Temp", "Document is ready for processing");
+       console.log("TEMP FILE:", tempPath);
+     } catch (err: any) {
+       console.error("TEMP SAVE ERROR:", err);
+       Alert.alert("Error", err.message || "Failed to save temp file");
+     }
+   };
+
+
   return (
     <View style={styles.container}>
       {/* Header */}
@@ -12,7 +59,8 @@ export default function HomeScreen() {
 
       {/* Actions */}
       <View style={styles.actions}>
-        <Pressable style={styles.card}>
+        {/* Upload */}
+        <Pressable style={styles.card} onPress={pickDocument}>
           <Ionicons name="cloud-upload-outline" size={34} color="#2563eb" />
           <Text style={styles.cardTitle}>Upload Document</Text>
           <Text style={styles.cardSubtitle}>Choose a file from your phone</Text>
