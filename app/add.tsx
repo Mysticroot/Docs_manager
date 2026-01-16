@@ -1,10 +1,10 @@
-import { View, Text, StyleSheet, Pressable, Image, Alert } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import * as FileSystem from "expo-file-system/legacy";
-import { useState, useRef } from "react";
+import { Directory, File, Paths } from "expo-file-system";
 import { router } from "expo-router";
+import { useRef, useState } from "react";
+import { Alert, Image, Pressable, StyleSheet, Text, View } from "react-native";
 
-const TEMP_DIR = FileSystem.cacheDirectory + "temp/";
+const TEMP_DIR = new Directory(Paths.cache, "temp");
 
 export default function ScanScreen() {
   const [permission, requestPermission] = useCameraPermissions();
@@ -41,18 +41,18 @@ export default function ScanScreen() {
         skipProcessing: true,
       });
 
-      await FileSystem.makeDirectoryAsync(TEMP_DIR, {
-        intermediates: true,
-      });
+      if (!TEMP_DIR.exists) {
+        TEMP_DIR.create({
+          intermediates: true,
+        });
+      }
 
-      const tempPath = `${TEMP_DIR}scan_${Date.now()}.jpg`;
+      const tempFile = new File(TEMP_DIR, `scan_${Date.now()}.jpg`);
+      const sourceFile = new File(photo.uri);
+      
+      await sourceFile.move(tempFile);
 
-      await FileSystem.moveAsync({
-        from: photo.uri,
-        to: tempPath,
-      });
-
-      setPhotoUri(tempPath);
+      setPhotoUri(tempFile.uri);
     } catch (err) {
       console.error("Capture failed:", err);
       Alert.alert("Error", "Failed to capture image");
@@ -62,7 +62,10 @@ export default function ScanScreen() {
   // ❌ Discard → delete temp → back to camera
   const discardPhoto = async () => {
     if (photoUri) {
-      await FileSystem.deleteAsync(photoUri, { idempotent: true });
+      const file = new File(photoUri);
+      if (file.exists) {
+        await file.delete();
+      }
     }
     setPhotoUri(null);
   };
