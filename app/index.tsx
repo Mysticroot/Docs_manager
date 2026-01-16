@@ -1,9 +1,8 @@
-import  {Directory,File,Paths} from "expo-file-system";
-import { View, Text, StyleSheet, Pressable, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system";
+import { Directory, File, Paths } from "expo-file-system";
 import { router } from "expo-router";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 
 
 const TEMP_DIR = new Directory(Paths.cache, "temp");
@@ -32,18 +31,16 @@ export default function HomeScreen() {
 
        const file = result.assets[0];
 
-       await ensureTempDir();
+       ensureTempDir();
 
        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-       const tempPath = `${TEMP_DIR}${Date.now()}_${safeName}`;
+       const tempFile = new File(TEMP_DIR, `${Date.now()}_${safeName}`);
 
-         const sourceFile = new File(file.uri);
-
-        await sourceFile.copy(TEMP_DIR);
-
+       const sourceFile = new File(file.uri);
+       await sourceFile.copy(tempFile);
 
        Alert.alert("Saved to Temp", "Document is ready for processing");
-       console.log("TEMP FILE:", tempPath);
+       console.log("TEMP FILE:", tempFile.uri);
      } catch (err: any) {
        console.error("TEMP SAVE ERROR:", err);
        Alert.alert("Error", err.message || "Failed to save temp file");
