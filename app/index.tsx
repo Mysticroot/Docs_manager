@@ -3,6 +3,8 @@ import { View, Text, StyleSheet, Pressable, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
+import { router } from "expo-router";
+
 
 const TEMP_DIR = new Directory(Paths.cache, "temp");
 
@@ -66,7 +68,7 @@ export default function HomeScreen() {
           <Text style={styles.cardSubtitle}>Choose a file from your phone</Text>
         </Pressable>
 
-        <Pressable style={styles.card}>
+        <Pressable style={styles.card} onPress={() => router.push("/add")}>
           <Ionicons name="scan-outline" size={34} color="#16a34a" />
           <Text style={styles.cardTitle}>Scan Document</Text>
           <Text style={styles.cardSubtitle}>Scan using your camera</Text>
