@@ -4,6 +4,14 @@ import { router } from "expo-router";
 import { useRef, useState } from "react";
 import { Alert, Image, Pressable, StyleSheet, Text, View } from "react-native";
 
+// Conditionally import MlkitOcr with error handling
+let MlkitOcr: any = null;
+try {
+  MlkitOcr = require("rn-mlkit-ocr").default;
+} catch (error) {
+  console.warn("rn-mlkit-ocr not linked. OCR functionality disabled. Please build with expo-dev-client.");
+}
+
 const TEMP_DIR = new Directory(Paths.cache, "temp");
 
 export default function ScanScreen() {
@@ -14,6 +22,7 @@ export default function ScanScreen() {
 
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [capturedImages, setCapturedImages] = useState<string[]>([]);
+  const [recognizedText, setRecognizedText] = useState<string>("");
 
   if (!permission) return null;
 
@@ -49,10 +58,24 @@ export default function ScanScreen() {
 
       const tempFile = new File(TEMP_DIR, `scan_${Date.now()}.jpg`);
       const sourceFile = new File(photo.uri);
-      
+
       await sourceFile.move(tempFile);
 
       setPhotoUri(tempFile.uri);
+
+      // Perform OCR if available
+      if (MlkitOcr) {
+        try {
+          const result = await MlkitOcr.recognizeText(tempFile.uri);
+          setRecognizedText(result.text);
+          console.log("OCR Result:", result.text);
+        } catch (ocrError) {
+          console.error("OCR failed:", ocrError);
+          setRecognizedText("OCR processing failed");
+        }
+      } else {
+        setRecognizedText("OCR not available - build with expo-dev-client");
+      }
     } catch (err) {
       console.error("Capture failed:", err);
       Alert.alert("Error", "Failed to capture image");
@@ -68,6 +91,7 @@ export default function ScanScreen() {
       }
     }
     setPhotoUri(null);
+    setRecognizedText("");
   };
 
   // ➕ Continue → save temp → back to camera
@@ -76,6 +100,7 @@ export default function ScanScreen() {
 
     setCapturedImages((prev) => [...prev, photoUri]);
     setPhotoUri(null);
+    setRecognizedText("");
   };
 
   // ✅ Done → alert count → reset session
@@ -88,6 +113,7 @@ export default function ScanScreen() {
     // Reset scan session (camera ready for next time)
     setCapturedImages([]);
     setPhotoUri(null);
+    setRecognizedText("");
 
     router.replace("/");
   };
@@ -106,6 +132,11 @@ export default function ScanScreen() {
           <Pressable style={styles.accept} onPress={continueScan}>
             <Text style={styles.actionText}>Continue</Text>
           </Pressable>
+        </View>
+
+        {/* Display recognized text */}
+        <View style={styles.textContainer}>
+          <Text style={styles.recognizedText}>{recognizedText}</Text>
         </View>
       </View>
     );
@@ -126,12 +157,13 @@ export default function ScanScreen() {
       </View>
 
       {/* Thumbnail preview (last accepted scan) */}
+
       {capturedImages.length > 0 && (
         <Image
           source={{ uri: capturedImages[capturedImages.length - 1] }}
           style={styles.thumbnail}
         />
-      )}
+  )}
 
       {/* Done button (enabled after ≥1 Continue) */}
       {capturedImages.length > 0 && (
@@ -233,5 +265,15 @@ const styles = StyleSheet.create({
     color: "#2563eb",
     marginTop: 10,
     fontWeight: "600",
+  },
+
+  textContainer: {
+    padding: 20,
+    backgroundColor: "#000",
+  },
+
+  recognizedText: {
+    color: "#fff",
+    fontSize: 16,
   },
 });
