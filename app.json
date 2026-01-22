@@ -59,8 +59,8 @@
       "typedRoutes": true,
       "reactCompiler": true
     },
+    "owner": "serving-temp",
     "extra": {
-      "router": {},
       "eas": {
         "projectId": "3d92b25a-9401-4aeb-aace-3a6b85ef2daf"
       }

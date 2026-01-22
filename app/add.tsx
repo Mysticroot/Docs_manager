@@ -4,25 +4,39 @@ import { router } from "expo-router";
 import { useRef, useState } from "react";
 import { Alert, Image, Pressable, StyleSheet, Text, View } from "react-native";
 
-// Conditionally import MlkitOcr with error handling
+import { cleanOCRText } from "../utils/ocr";
+import { detectDocumentType, extractName, extractDOB } from "../utils/extract";
+
+// ---------------- OCR ----------------
 let MlkitOcr: any = null;
 try {
   MlkitOcr = require("rn-mlkit-ocr").default;
-} catch (error) {
-  console.warn("rn-mlkit-ocr not linked. OCR functionality disabled. Please build with expo-dev-client.");
+} catch {
+  console.warn("OCR disabled. Build with expo-dev-client.");
 }
 
+// ---------------- DIRECTORIES ----------------
 const TEMP_DIR = new Directory(Paths.cache, "temp");
+const BASE_DIR = new Directory(Paths.document, "DocsManager");
+
+// ---------------- TYPES ----------------
+type ScannedDoc = {
+  uri: string;
+  name: string;
+  docType: string;
+  dob?: string | null;
+};
 
 export default function ScanScreen() {
   const [permission, requestPermission] = useCameraPermissions();
 
   const cameraRef = useRef<CameraView | null>(null);
-  const [cameraReady, setCameraReady] = useState(false);
+  const currentDoc = useRef<ScannedDoc | null>(null);
 
+  const [cameraReady, setCameraReady] = useState(false);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
-  const [capturedImages, setCapturedImages] = useState<string[]>([]);
-  const [recognizedText, setRecognizedText] = useState<string>("");
+  const [recognizedText, setRecognizedText] = useState("");
+  const [capturedDocs, setCapturedDocs] = useState<ScannedDoc[]>([]);
 
   if (!permission) return null;
 
@@ -37,7 +51,7 @@ export default function ScanScreen() {
     );
   }
 
-  // 📸 Take photo
+  // ---------------- TAKE PHOTO ----------------
   const takePhoto = async () => {
     if (!cameraRef.current || !cameraReady) {
       Alert.alert("Camera not ready");
@@ -51,74 +65,121 @@ export default function ScanScreen() {
       });
 
       if (!TEMP_DIR.exists) {
-        TEMP_DIR.create({
-          intermediates: true,
-        });
+        await TEMP_DIR.create({ intermediates: true });
       }
 
       const tempFile = new File(TEMP_DIR, `scan_${Date.now()}.jpg`);
-      const sourceFile = new File(photo.uri);
-
-      await sourceFile.move(tempFile);
+      await new File(photo.uri).move(tempFile);
 
       setPhotoUri(tempFile.uri);
 
-      // Perform OCR if available
       if (MlkitOcr) {
-        try {
-          const result = await MlkitOcr.recognizeText(tempFile.uri);
-          setRecognizedText(result.text);
-          console.log("OCR Result:", result.text);
-        } catch (ocrError) {
-          console.error("OCR failed:", ocrError);
-          setRecognizedText("OCR processing failed");
-        }
-      } else {
-        setRecognizedText("OCR not available - build with expo-dev-client");
+        const result = await MlkitOcr.recognizeText(tempFile.uri);
+        console.log(result);
+
+        const cleaned = cleanOCRText(result.text);
+        setRecognizedText(cleaned);
+        console.log(cleaned);
+
+        const name = extractName(cleaned) ?? "Unknown";
+        const docType = detectDocumentType(cleaned) ?? "other";
+        console.log(docType);
+
+        const dob = extractDOB(cleaned);
+
+        currentDoc.current = {
+          uri: tempFile.uri,
+          name,
+          docType,
+          dob,
+        };
       }
     } catch (err) {
-      console.error("Capture failed:", err);
+      console.error(err);
       Alert.alert("Error", "Failed to capture image");
     }
   };
 
-  // ❌ Discard → delete temp → back to camera
+  // ---------------- DISCARD ----------------
   const discardPhoto = async () => {
     if (photoUri) {
-      const file = new File(photoUri);
-      if (file.exists) {
-        await file.delete();
-      }
+      const f = new File(photoUri);
+      if (f.exists) await f.delete();
     }
+    currentDoc.current = null;
     setPhotoUri(null);
     setRecognizedText("");
   };
 
-  // ➕ Continue → save temp → back to camera
+  // ---------------- CONTINUE ----------------
   const continueScan = () => {
-    if (!photoUri) return;
+    const doc = currentDoc.current;
+    if (!doc) return;
 
-    setCapturedImages((prev) => [...prev, photoUri]);
+    setCapturedDocs((prev) => [...prev, doc]);
+
+    currentDoc.current = null;
     setPhotoUri(null);
     setRecognizedText("");
   };
 
-  // ✅ Done → alert count → reset session
-  const doneScanning = () => {
-    Alert.alert(
-      "Done",
-      `${capturedImages.length} document(s) ready for processing`
-    );
+  // ---------------- DONE (FINAL SAVE) ----------------
+  const doneScanning = async () => {
+    try {
+      if (!BASE_DIR.exists) {
+        await BASE_DIR.create({ intermediates: true });
+      }
 
-    // Reset scan session (camera ready for next time)
-    setCapturedImages([]);
-    setPhotoUri(null);
-    setRecognizedText("");
+      for (const doc of capturedDocs) {
+        // 🧠 PERSON FOLDER (FIRST NAME)
+        const personName = doc.name?.trim()
+          ? doc.name
+              .trim()
+              .split(/\s+/)[0]
+              .replace(/[^a-zA-Z]/g, "")
+          : "Unknown";
 
-    router.replace("/");
+        const personFolder = new Directory(BASE_DIR, personName);
+
+        // ✅ Create only if not exists
+        if (!personFolder.exists) {
+          await personFolder.create({ intermediates: true });
+        }
+
+        // 🧾 FILE NAME (DOC TYPE BASED)
+        const year = doc.dob?.split("/")?.[2] ?? "NA";
+        const docType = doc.docType || "Other";
+
+        const finalName = `${docType}_${personName}_${year}_${Date.now()}.jpg`;
+
+        const finalFile = new File(personFolder, finalName);
+        const tempFile = new File(doc.uri);
+
+        if (tempFile.exists) {
+          await tempFile.move(finalFile);
+        }
+      }
+
+      Alert.alert(
+        "Saved",
+        `${capturedDocs.length} document(s) saved under person folders`,
+      );
+
+      // 🧹 RESET STATE
+      setCapturedDocs([]);
+      setPhotoUri(null);
+      setRecognizedText("");
+      currentDoc.current = null;
+
+      router.replace("/");
+    } catch (err) {
+      console.error(err);
+      Alert.alert("Error", "Failed to save documents");
+    }
   };
+  
 
-  // 🖼 PREVIEW MODE — ALWAYS for any capture
+  // ---------------- PREVIEW ----------------
   if (photoUri) {
     return (
       <View style={styles.previewContainer}>
@@ -134,7 +195,6 @@ export default function ScanScreen() {
           </Pressable>
         </View>
 
-        {/* Display recognized text */}
         <View style={styles.textContainer}>
           <Text style={styles.recognizedText}>{recognizedText}</Text>
         </View>
@@ -142,7 +202,7 @@ export default function ScanScreen() {
     );
   }
 
-  // 📷 CAMERA MODE
+  // ---------------- CAMERA ----------------
   return (
     <View style={styles.cameraContainer}>
       <CameraView
@@ -151,22 +211,18 @@ export default function ScanScreen() {
         onCameraReady={() => setCameraReady(true)}
       />
 
-      {/* Capture button */}
       <View style={styles.captureContainer}>
         <Pressable style={styles.captureButton} onPress={takePhoto} />
       </View>
 
-      {/* Thumbnail preview (last accepted scan) */}
-
-      {capturedImages.length > 0 && (
+      {capturedDocs.length > 0 && (
         <Image
-          source={{ uri: capturedImages[capturedImages.length - 1] }}
+          source={{ uri: capturedDocs[capturedDocs.length - 1].uri }}
           style={styles.thumbnail}
         />
-  )}
+      )}
 
-      {/* Done button (enabled after ≥1 Continue) */}
-      {capturedImages.length > 0 && (
+      {capturedDocs.length > 0 && (
         <Pressable style={styles.doneButton} onPress={doneScanning}>
           <Text style={styles.doneText}>Done</Text>
         </Pressable>
@@ -175,60 +231,32 @@ export default function ScanScreen() {
   );
 }
 
+// ---------------- STYLES ----------------
 const styles = StyleSheet.create({
-  cameraContainer: {
-    flex: 1,
-    backgroundColor: "#000",
-  },
-
+  cameraContainer: { flex: 1, backgroundColor: "#000" },
   captureContainer: {
     position: "absolute",
     bottom: 40,
     width: "100%",
     alignItems: "center",
   },
-
   captureButton: {
     width: 72,
     height: 72,
     borderRadius: 36,
     backgroundColor: "#fff",
   },
-
-  previewContainer: {
-    flex: 1,
-    backgroundColor: "#000",
-  },
-
-  preview: {
-    flex: 1,
-    resizeMode: "contain",
-  },
-
+  previewContainer: { flex: 1, backgroundColor: "#000" },
+  preview: { flex: 1, resizeMode: "contain" },
   actions: {
     flexDirection: "row",
     justifyContent: "space-between",
     padding: 20,
     backgroundColor: "#111",
   },
-
-  reject: {
-    padding: 14,
-    backgroundColor: "#dc2626",
-    borderRadius: 8,
-  },
-
-  accept: {
-    padding: 14,
-    backgroundColor: "#2563eb",
-    borderRadius: 8,
-  },
-
-  actionText: {
-    color: "#fff",
-    fontWeight: "600",
-  },
-
+  reject: { padding: 14, backgroundColor: "#dc2626", borderRadius: 8 },
+  accept: { padding: 14, backgroundColor: "#2563eb", borderRadius: 8 },
+  actionText: { color: "#fff", fontWeight: "600" },
   thumbnail: {
     position: "absolute",
     bottom: 40,
@@ -239,7 +267,6 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "#fff",
   },
-
   doneButton: {
     position: "absolute",
     top: 40,
@@ -249,31 +276,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: 8,
   },
-
-  doneText: {
-    color: "#fff",
-    fontWeight: "600",
-  },
-
-  center: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  link: {
-    color: "#2563eb",
-    marginTop: 10,
-    fontWeight: "600",
-  },
-
-  textContainer: {
-    padding: 20,
-    backgroundColor: "#000",
-  },
-
-  recognizedText: {
-    color: "#fff",
-    fontSize: 16,
-  },
+  doneText: { color: "#fff", fontWeight: "600" },
+  center: { flex: 1, justifyContent: "center", alignItems: "center" },
+  link: { color: "#2563eb", marginTop: 10, fontWeight: "600" },
+  textContainer: { padding: 20, backgroundColor: "#000" },
+  recognizedText: { color: "#fff", fontSize: 16 },
 });
