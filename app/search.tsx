@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import {  useState } from "react";
+import { useFocusEffect } from "expo-router";
 import {
   View,
   Text,
@@ -9,6 +10,7 @@ import {
   Alert,
 } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
+import { useLocalSearchParams } from "expo-router";
 
 const BASE_DIR = FileSystem.documentDirectory + "DocsManager/";
 
@@ -19,10 +21,16 @@ type DocFile = {
 };
 
 export default function SearchScreen() {
+  const { refresh } = useLocalSearchParams();
+
   const [files, setFiles] = useState<DocFile[]>([]);
   const [preview, setPreview] = useState<DocFile | null>(null);
 
-  // 📂 Load documents
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectionMode, setSelectionMode] = useState(false);
+
+  /* ---------------- LOAD DOCUMENTS ---------------- */
+
   const loadDocuments = async () => {
     const baseInfo = await FileSystem.getInfoAsync(BASE_DIR);
     if (!baseInfo.exists) {
@@ -49,63 +57,99 @@ export default function SearchScreen() {
     setFiles(collected);
   };
 
-  useEffect(() => {
-    loadDocuments();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      loadDocuments();
+    }, []),
+  );
 
-  // 🧹 Clear all documents
-  const clearAllDocuments = () => {
-    Alert.alert(
-      "Clear all documents?",
-      "This will permanently delete all saved documents.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Clear All",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              const baseInfo = await FileSystem.getInfoAsync(BASE_DIR);
-              if (baseInfo.exists) {
-                await FileSystem.deleteAsync(BASE_DIR, {
-                  idempotent: true,
-                });
-              }
 
-              setFiles([]);
-              setPreview(null);
-            } catch (err) {
-              console.error(err);
-              Alert.alert("Error", "Failed to clear documents");
-            }
-          },
+  /* ---------------- SELECTION HELPERS ---------------- */
+
+  const toggleSelect = (uri: string) => {
+    setSelected((prev) => {
+      const copy = new Set(prev);
+      copy.has(uri) ? copy.delete(uri) : copy.add(uri);
+      return copy;
+    });
+  };
+
+  const selectAll = () => {
+    setSelected(new Set(files.map((f) => f.uri)));
+  };
+
+  const clearSelection = () => {
+    setSelected(new Set());
+    setSelectionMode(false);
+  };
+
+  const deleteSelected = async () => {
+    Alert.alert("Delete selected?", `Delete ${selected.size} document(s)?`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          for (const uri of selected) {
+            await FileSystem.deleteAsync(uri, { idempotent: true });
+          }
+
+          clearSelection();
+          setPreview(null);
+          loadDocuments();
         },
-      ],
+      },
+    ]);
+  };
+
+  /* ---------------- LIST ITEM ---------------- */
+
+  const renderItem = ({ item }: { item: DocFile }) => {
+    const isSelected = selected.has(item.uri);
+
+    return (
+      <Pressable
+        onLongPress={() => {
+          setSelectionMode(true);
+          setSelected(new Set([item.uri]));
+        }}
+        onPress={() => {
+          if (selectionMode) {
+            toggleSelect(item.uri);
+          } else {
+            setPreview(item);
+          }
+        }}
+        style={[styles.file, isSelected && styles.selectedFile]}
+      >
+        <Text style={styles.person}>{item.person}</Text>
+        <Text style={styles.filename}>{item.name}</Text>
+      </Pressable>
     );
   };
 
-  // 📄 Render list item
-  const renderItem = ({ item }: { item: DocFile }) => (
-    <Pressable style={styles.file} onPress={() => setPreview(item)}>
-      <Text style={styles.person}>{item.person}</Text>
-      <Text style={styles.filename}>{item.name}</Text>
-    </Pressable>
-  );
+  /* ---------------- UI ---------------- */
 
   return (
     <View style={styles.container}>
       {/* HEADER */}
       <View style={styles.header}>
-        <Text style={styles.title}>Search Documents</Text>
+        {selectionMode ? (
+          <>
+            <Pressable onPress={selectAll}>
+              <Text style={styles.action}>Select All</Text>
+            </Pressable>
 
-        {!preview && files.length > 0 && (
-          <Pressable onPress={clearAllDocuments}>
-            <Text style={styles.clear}>Clear All</Text>
-          </Pressable>
+            <Pressable onPress={deleteSelected}>
+              <Text style={[styles.action, styles.delete]}>Delete</Text>
+            </Pressable>
+          </>
+        ) : (
+          <Text style={styles.title}>Documents</Text>
         )}
       </View>
 
-      {/* 📃 LIST */}
+      {/* LIST */}
       {!preview && (
         <FlatList
           data={files}
@@ -117,7 +161,7 @@ export default function SearchScreen() {
         />
       )}
 
-      {/* 👁️ INLINE PREVIEW */}
+      {/* PREVIEW */}
       {preview && (
         <View style={styles.previewContainer}>
           <View style={styles.previewHeader}>
@@ -130,13 +174,9 @@ export default function SearchScreen() {
             </Pressable>
           </View>
 
-          {/* Image preview only (Expo Go safe) */}
           {preview.uri.toLowerCase().endsWith(".pdf") ? (
             <View style={styles.pdfFallback}>
-              <Text style={styles.pdfText}>PDF preview not supported here</Text>
-              <Text style={styles.pdfTextSmall}>
-                Use Expo Dev Client to enable PDF preview
-              </Text>
+              <Text style={styles.pdfText}>PDF preview not available</Text>
             </View>
           ) : (
             <Image source={{ uri: preview.uri }} style={styles.previewImage} />
@@ -147,14 +187,14 @@ export default function SearchScreen() {
   );
 }
 
-// 🎨 STYLES
+/* ---------------- STYLES ---------------- */
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#f8fafc",
     paddingHorizontal: 16,
-    paddingBottom: 16,
-    paddingTop: 48, // ✅ FIX: pushes content below status bar
+    paddingTop: 48,
   },
 
   header: {
@@ -164,26 +204,33 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
 
-  clear: {
-    color: "#dc2626",
-    fontSize: 14,
-    fontWeight: "600",
-    paddingVertical: 8, // ✅ better touch area
-    paddingHorizontal: 10,
-  },
-
   title: {
     fontSize: 22,
     fontWeight: "700",
   },
 
- 
+  action: {
+    fontSize: 14,
+    fontWeight: "600",
+    padding: 8,
+    color: "#2563eb",
+  },
+
+  delete: {
+    color: "#dc2626",
+  },
 
   file: {
     backgroundColor: "#fff",
     padding: 14,
     borderRadius: 10,
     marginBottom: 10,
+  },
+
+  selectedFile: {
+    backgroundColor: "#dbeafe",
+    borderWidth: 2,
+    borderColor: "#2563eb",
   },
 
   person: {
@@ -244,18 +291,10 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    padding: 20,
   },
 
   pdfText: {
     color: "#fff",
     fontSize: 16,
-    marginBottom: 6,
-  },
-
-  pdfTextSmall: {
-    color: "#9ca3af",
-    fontSize: 12,
-    textAlign: "center",
   },
 });
