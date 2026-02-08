@@ -101,7 +101,6 @@ export default function SearchScreen() {
   return (
     <View style={styles.container}>
       <SelectionHeader
-        selectionMode={selectionMode}
         selectedCount={selected.size}
         totalCount={files.length}
         allSelected={allSelected}
