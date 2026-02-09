@@ -28,12 +28,13 @@ export async function loadDocuments(): Promise<DocFile[]> {
         uri,
         name: doc,
         person,
-        modified: (info as any).mtime ?? 0,
+        // @ts-ignore
+        modified: info.modificationTime ?? 0,
       });
     }
   }
 
-  // 🔥 latest first
+  // 🔥 newest first
   return collected.sort((a, b) => b.modified - a.modified);
 }
 
